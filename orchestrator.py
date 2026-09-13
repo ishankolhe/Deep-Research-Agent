@@ -9,7 +9,9 @@ from agents.comparison_agent import build_comparison_table
 from agents.chart_agent import extract_chartable_data, render_charts, find_supporting_images
 from utils.export_docx import export_docx
 from utils.export_pdf import export_pdf
+from utils.source_cache import SourceCache
 from utils import db
+from utils import gemini_client, tavily_client, academic_search
 
 OUTPUT_ROOT = os.path.join(os.path.dirname(__file__), "outputs")
 
@@ -44,8 +46,10 @@ def run_job(job_id: str, max_reflection_rounds: int = 1):
     """
     The core agent loop. Call this in a background thread/task from the API layer.
     deep_mode swaps in academic-source research, a rigor-aligned planner, a
-    comparison table, and a multi-section writer — costs more API calls and
-    takes longer, so it's opt-in per request, not the default.
+    comparison table, a multi-section writer, and a source cache that skips
+    redundant Gemini calls when the same paper resurfaces across sub-questions —
+    costs more API calls than fast mode overall, but avoids the extra waste that
+    would come from mining the same source repeatedly.
     """
     query = JOBS[job_id]["query"]
     owner_name = JOBS[job_id].get("owner_name", "guest")
@@ -53,7 +57,16 @@ def run_job(job_id: str, max_reflection_rounds: int = 1):
     job_dir = os.path.join(OUTPUT_ROOT, job_id)
     os.makedirs(job_dir, exist_ok=True)
 
-    research_fn = research_subquestion_academic if deep_mode else research_subquestion
+    # Reset counters so end-of-job stats reflect only this job's actual usage.
+    gemini_client.reset_call_count()
+    tavily_client.reset_call_count()
+    academic_search.reset_call_count()
+    cache = SourceCache() if deep_mode else None
+
+    def research_fn(sq: str) -> dict:
+        if deep_mode:
+            return research_subquestion_academic(sq, cache=cache)
+        return research_subquestion(sq)
 
     try:
         _log(job_id, "planning", 5, f"Planning sub-questions for: {query}")
@@ -104,6 +117,14 @@ def run_job(job_id: str, max_reflection_rounds: int = 1):
                                os.path.join(job_dir, "report.pdf"))
         docx_path = export_docx(query, report_md, chart_paths, image_paths,
                                  os.path.join(job_dir, "report.docx"))
+
+        if deep_mode and cache is not None:
+            cache_stats = cache.stats()
+            _log(job_id, "done", 99,
+                 f"Research efficiency — Gemini calls: {gemini_client.get_call_count()}, "
+                 f"search calls: {tavily_client.get_call_count() + academic_search.get_call_count()}, "
+                 f"unique sources: {cache_stats['unique_sources']}, "
+                 f"duplicate sources skipped: {cache_stats['duplicate_sources_skipped']}")
 
         JOBS[job_id]["report"] = {
             "markdown": report_md,

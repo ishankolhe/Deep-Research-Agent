@@ -13,10 +13,25 @@ _model = genai.GenerativeModel(MODEL_NAME)
 MIN_SECONDS_BETWEEN_CALLS = float(os.environ.get("GEMINI_MIN_SECONDS_BETWEEN_CALLS", "4"))
 _last_call_ts = 0.0
 
+# Simple call counter — every generate_text/generate_json call funnels through
+# _call(), so this gives an accurate total regardless of which agent made the
+# call. Reset per job by the orchestrator to report real efficiency numbers
+# instead of a claimed/estimated one.
+_call_count = 0
+
+
+def reset_call_count():
+    global _call_count
+    _call_count = 0
+
+
+def get_call_count() -> int:
+    return _call_count
+
 
 def _call(prompt: str, retries: int = 3, delay: float = 8.0) -> str:
-    """Basic call with pacing + retry/backoff to survive free-tier rate limits (429s)."""
-    global _last_call_ts
+    """Basic call with pacing + retry/backup to survive free-tier rate limits (429s)."""
+    global _last_call_ts, _call_count
     last_err = None
     for attempt in range(retries):
         wait = MIN_SECONDS_BETWEEN_CALLS - (time.time() - _last_call_ts)
@@ -25,6 +40,7 @@ def _call(prompt: str, retries: int = 3, delay: float = 8.0) -> str:
         try:
             resp = _model.generate_content(prompt)
             _last_call_ts = time.time()
+            _call_count += 1
             return resp.text
         except Exception as e:
             last_err = e

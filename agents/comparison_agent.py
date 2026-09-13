@@ -24,9 +24,12 @@ def build_comparison_table(query: str, research_results: list[dict]) -> str | No
         f"to compare, return a comparison table. If fewer than 2 clear named things "
         f"exist, return an empty rows list — do not force a comparison that isn't "
         f"supported by the facts.\n\n"
-        f"Choose comparison columns that fit what the facts actually cover (e.g. "
-        f"Year, Domain, Key capability, Reported performance, Limitations, Human "
-        f"intervention required — use only columns you have real facts for)."
+        f"Choose comparison columns that fit what the facts actually cover — for "
+        f"topics involving autonomous systems/agents, good columns (where facts "
+        f"support them) include: Year, Domain, Hypothesis generation, Experiment "
+        f"execution, Human intervention, Reported performance, Reproducibility, "
+        f"Major limitation. For other topic types, adapt columns to what's actually "
+        f"comparable. Only use columns you have real facts for — do not invent."
     )
     schema = (
         '{"columns": ["System", "Year", "..."], '

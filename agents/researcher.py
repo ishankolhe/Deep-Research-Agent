@@ -1,14 +1,15 @@
 from utils.tavily_client import search
 from utils.academic_search import search_academic
 from utils.gemini_client import generate_json
+from utils.source_cache import SourceCache
 
 
 def _extract_facts(subquestion: str, sources: list[dict]) -> list[dict]:
     """
-    Shared extraction step: one Gemini call covering all sources together (stays
-    within free-tier daily request caps), tagging each fact with which source it
-    came from so citation metadata (author/year/venue for academic sources, plain
-    URL for web) survives into the final report.
+    Shared extraction step: one Gemini call covering all NEW sources together
+    (stays within free-tier daily request caps), tagging each fact with which
+    source it came from so citation metadata (author/year/venue for academic
+    sources, plain URL for web) survives into the final report.
     """
     sources = [s for s in sources if s.get("abstract") or s.get("content")]
     if not sources:
@@ -54,16 +55,40 @@ def _extract_facts(subquestion: str, sources: list[dict]) -> list[dict]:
     return facts
 
 
-def research_subquestion(subquestion: str) -> dict:
+def _research(subquestion: str, sources: list[dict], cache: SourceCache | None) -> dict:
+    """
+    If a cache is supplied, sources already mined by an earlier sub-question in
+    this same job are reused directly (no second Gemini call) — only genuinely
+    new sources get extracted. Without a cache (fast mode), behaves as before.
+    """
+    if cache is None:
+        facts = _extract_facts(subquestion, sources)
+        return {"subquestion": subquestion, "facts": facts}
+
+    new_sources, reused_facts = cache.split_new_and_cached(sources)
+    new_facts = _extract_facts(subquestion, new_sources)
+
+    # Group newly extracted facts by their source URL so each source's facts
+    # can be cached individually for reuse by a later sub-question.
+    by_url: dict[str, list[dict]] = {}
+    for f in new_facts:
+        by_url.setdefault(f["source_url"], []).append(f)
+    for url, url_facts in by_url.items():
+        cache.store(url, url_facts)
+
+    return {"subquestion": subquestion, "facts": reused_facts + new_facts}
+
+
+def research_subquestion(subquestion: str, cache: SourceCache | None = None) -> dict:
     """Fast mode: general web search via Tavily."""
     sources = search(subquestion, max_results=4)
     for s in sources:
         s["source_type"] = "web"
-    facts = _extract_facts(subquestion, sources)
-    return {"subquestion": subquestion, "facts": facts}
+    return _research(subquestion, sources, cache)
 
 
-def research_subquestion_academic(subquestion: str, min_academic: int = 2) -> dict:
+def research_subquestion_academic(subquestion: str, cache: SourceCache | None = None,
+                                   min_academic: int = 2) -> dict:
     """
     Deep mode: prioritizes peer-reviewed/preprint sources (arXiv + Semantic
     Scholar). Falls back to general web search only to fill remaining slots
@@ -78,5 +103,4 @@ def research_subquestion_academic(subquestion: str, min_academic: int = 2) -> di
         for s in web_sources:
             s["source_type"] = "web"
         sources.extend(web_sources)
-    facts = _extract_facts(subquestion, sources)
-    return {"subquestion": subquestion, "facts": facts}
+    return _research(subquestion, sources, cache)

@@ -3,6 +3,17 @@ import xml.etree.ElementTree as ET
 
 ARXIV_NS = {"atom": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/atom"}
 
+_call_count = 0
+
+
+def reset_call_count():
+    global _call_count
+    _call_count = 0
+
+
+def get_call_count() -> int:
+    return _call_count
+
 
 def search_arxiv(query: str, max_results: int = 5) -> list[dict]:
     """
@@ -83,6 +94,8 @@ def search_academic(query: str, max_results: int = 5) -> list[dict]:
     remaining slots from arXiv. Returns [] if both fail — caller should
     fall back to general web search rather than block on this.
     """
+    global _call_count
+    _call_count += 1
     papers = search_semantic_scholar(query, max_results)
     if len(papers) < max_results:
         seen_titles = {p["title"].lower() for p in papers}
