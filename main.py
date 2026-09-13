@@ -31,6 +31,7 @@ app.mount("/outputs", StaticFiles(directory=OUTPUT_ROOT), name="outputs")
 class ResearchRequest(BaseModel):
     query: str
     owner_name: str = "guest"
+    deep_mode: bool = False
 
 
 class AskRequest(BaseModel):
@@ -53,7 +54,8 @@ def _get_research_results(job_id: str) -> list:
 def create_research(req: ResearchRequest, background_tasks: BackgroundTasks):
     if not req.query or not req.query.strip():
         raise HTTPException(400, "query must not be empty")
-    job_id = start_job(req.query.strip(), owner_name=(req.owner_name or "guest").strip())
+    job_id = start_job(req.query.strip(), owner_name=(req.owner_name or "guest").strip(),
+                        deep_mode=req.deep_mode)
     background_tasks.add_task(run_job, job_id)
     return {"job_id": job_id}
 
@@ -104,7 +106,9 @@ def get_report(job_id: str):
 
     citation_map = build_citation_map(research_results)
     citations = sorted(
-        [{"number": c["number"], "title": c["title"], "url": url}
+        [{"number": c["number"], "title": c["title"], "url": url,
+          "authors": c.get("authors", []), "year": c.get("year", ""),
+          "venue": c.get("venue", ""), "source_type": c.get("source_type", "web")}
          for url, c in citation_map.items()],
         key=lambda c: c["number"],
     )

@@ -2,9 +2,10 @@ import os
 import uuid
 
 from agents.planner import plan_subquestions
-from agents.researcher import research_subquestion
+from agents.researcher import research_subquestion, research_subquestion_academic
 from agents.reflector import find_gaps
-from agents.synthesizer import write_report
+from agents.synthesizer import write_report, write_deep_report
+from agents.comparison_agent import build_comparison_table
 from agents.chart_agent import extract_chartable_data, render_charts, find_supporting_images
 from utils.export_docx import export_docx
 from utils.export_pdf import export_pdf
@@ -24,11 +25,12 @@ def _log(job_id: str, status: str, progress: int, message: str):
     job["log"].append(message)
 
 
-def start_job(query: str, owner_name: str = "guest") -> str:
+def start_job(query: str, owner_name: str = "guest", deep_mode: bool = False) -> str:
     job_id = str(uuid.uuid4())[:8]
     JOBS[job_id] = {
         "query": query,
         "owner_name": owner_name,
+        "deep_mode": deep_mode,
         "status": "queued",
         "progress": 0,
         "log": [],
@@ -41,23 +43,30 @@ def start_job(query: str, owner_name: str = "guest") -> str:
 def run_job(job_id: str, max_reflection_rounds: int = 1):
     """
     The core agent loop. Call this in a background thread/task from the API layer.
+    deep_mode swaps in academic-source research, a rigor-aligned planner, a
+    comparison table, and a multi-section writer — costs more API calls and
+    takes longer, so it's opt-in per request, not the default.
     """
     query = JOBS[job_id]["query"]
     owner_name = JOBS[job_id].get("owner_name", "guest")
+    deep_mode = JOBS[job_id].get("deep_mode", False)
     job_dir = os.path.join(OUTPUT_ROOT, job_id)
     os.makedirs(job_dir, exist_ok=True)
 
+    research_fn = research_subquestion_academic if deep_mode else research_subquestion
+
     try:
         _log(job_id, "planning", 5, f"Planning sub-questions for: {query}")
-        subquestions = plan_subquestions(query)
+        subquestions = plan_subquestions(query, deep_mode=deep_mode)
         _log(job_id, "planning", 15, f"Planned {len(subquestions)} sub-questions")
 
         research_results = []
-        _log(job_id, "researching", 20, "Researching sub-questions")
+        _log(job_id, "researching", 20,
+             "Researching sub-questions" + (" (academic sources)" if deep_mode else ""))
         for i, sq in enumerate(subquestions, start=1):
             _log(job_id, "researching", 20 + int(20 * i / max(len(subquestions), 1)),
                  f"[{i}/{len(subquestions)}] Researching: {sq}")
-            result = research_subquestion(sq)
+            result = research_fn(sq)
             _log(job_id, "researching", 20 + int(20 * i / max(len(subquestions), 1)),
                  f"[{i}/{len(subquestions)}] Found {len(result['facts'])} facts")
             research_results.append(result)
@@ -70,10 +79,18 @@ def run_job(job_id: str, max_reflection_rounds: int = 1):
                 break
             _log(job_id, "researching", 55, f"Filling gaps: {gaps}")
             for gq in gaps:
-                research_results.append(research_subquestion(gq))
+                research_results.append(research_fn(gq))
 
-        _log(job_id, "writing", 65, "Synthesizing report")
-        report_md = write_report(query, research_results)
+        comparison_table_md = None
+        if deep_mode:
+            _log(job_id, "writing", 60, "Building system comparison table")
+            comparison_table_md = build_comparison_table(query, research_results)
+
+        _log(job_id, "writing", 65, "Synthesizing report" + (" (multi-section deep mode)" if deep_mode else ""))
+        if deep_mode:
+            report_md = write_deep_report(query, research_results, comparison_table_md)
+        else:
+            report_md = write_report(query, research_results)
 
         _log(job_id, "visualizing", 75, "Extracting chartable data")
         chart_specs = extract_chartable_data(research_results)
