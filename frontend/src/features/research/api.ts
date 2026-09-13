@@ -50,10 +50,10 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  startResearch: (query: string, ownerName: string) =>
+  startResearch: (query: string, ownerName: string, deepMode = false) =>
     request<{ job_id: string }>("/research", {
       method: "POST",
-      body: JSON.stringify({ query, owner_name: ownerName }),
+      body: JSON.stringify({ query, owner_name: ownerName, deep_mode: deepMode }),
     }),
   status: (jobId: string) => request<ResearchStatus>(`/research/${encodeURIComponent(jobId)}/status`),
   report: (jobId: string) => request<ResearchReport>(`/research/${encodeURIComponent(jobId)}/report`),
