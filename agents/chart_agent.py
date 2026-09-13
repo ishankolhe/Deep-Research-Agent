@@ -88,6 +88,32 @@ def render_charts(chart_specs: list[dict], output_dir: str) -> list[str]:
     return paths
 
 
+def generate_image_queries(query: str, subquestions: list[str], max_queries: int = 3) -> list[str]:
+    """
+    Sub-questions are full sentences ("What is the current adoption rate of...") which
+    make terrible stock-photo search terms. This asks Gemini to distill the topic into
+    short, concrete, visual phrases instead — the kind of thing you'd actually type into
+    a photo search bar.
+    """
+    prompt = (
+        f"Research topic: \"{query}\"\n"
+        f"Sub-questions covered: {'; '.join(subquestions)}\n\n"
+        f"Generate {max_queries} short stock-photo search phrases (2-5 words each) that "
+        f"would find CONCRETE, VISUALLY SPECIFIC images related to this topic — real "
+        f"objects, equipment, people, places, or scenes from this domain. Avoid abstract "
+        f"or generic corporate phrases like 'business technology' or 'digital innovation'. "
+        f"Prefer tangible nouns (e.g. for 'quantum computing', prefer 'quantum computer chip' "
+        f"over 'future technology')."
+    )
+    schema = '["short visual phrase 1", "short visual phrase 2", "short visual phrase 3"]'
+    try:
+        phrases = generate_json(prompt, schema)
+    except Exception:
+        phrases = []
+    phrases = [str(p) for p in phrases] if isinstance(phrases, list) else []
+    return phrases[:max_queries] if phrases else [query]
+
+
 def find_supporting_images(query: str, subquestions: list[str], output_dir: str,
                             max_images: int = 3) -> list[str]:
     """
@@ -95,9 +121,11 @@ def find_supporting_images(query: str, subquestions: list[str], output_dir: str,
     in the PDF/DOCX (not just linked externally). Returns local file paths.
     """
     os.makedirs(output_dir, exist_ok=True)
+    search_phrases = generate_image_queries(query, subquestions, max_images)
+
     urls = []
-    for sq in subquestions[:max_images]:
-        url = find_image(sq)
+    for phrase in search_phrases:
+        url = find_image(phrase)
         if url:
             urls.append(url)
     if not urls:
